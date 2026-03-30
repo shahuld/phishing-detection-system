@@ -1,0 +1,31 @@
+# Node
+node_modules/
+frontend/node_modules/
+
+# Java
+backend/target/
+
+# Python
+.venv/
+venv/
+__pycache__/
+
+# IMPORTANT: only ignore venv, NOT full ML code
+python ml/venv/
+
+# Datasets & models (large files)
+datasets/
+models/
+
+# Build
+build/
+dist/
+
+# Logs
+*.log
+
+# Env
+.env
+
+# System
+.DS_Store
