@@ -1,3 +1,4 @@
+
 # PhishGuard - Advanced Phishing Detection System
 
 [![React](https://img.shields.io/badge/React-19-green)](https://reactjs.org/)
@@ -73,9 +74,7 @@ phishing/
 └── datasets/          # Raw/processed data
 ```
 
-## Security Notes
-- Copy `application-example.properties` → `application.properties` and set your DB creds.
-- Frontend API base: Set `VITE_API_URL` in `.env`.
+## Security Notes\n- Copy `application-example.properties` → `application.properties` and set your DB creds.\n- Frontend API base: Set `VITE_API_URL` in `.env`.\n\n## Test Credentials (Development)\n- **Email**: test2@phishguard.com\n- **Password**: password123\n\nUse these to test login/register after backend restart. data.sql seeds test@phishguard.com (may need register for correct hash match).
 
 ## Troubleshooting
 - CORS: Allowed `*` (prod: restrict).

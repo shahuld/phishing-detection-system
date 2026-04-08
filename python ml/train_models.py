@@ -44,6 +44,9 @@ except ImportError:
     print("XGBoost not available. Install with: pip install xgboost")
 
 # Local imports
+import sys
+sys.path.append('..')
+from URLFeatureExtractor import URLFeatureExtractor
 from dataset_loader import (
     CombinedDatasetLoader, UCIDatasetLoader, KaggleDatasetLoader,
     DatasetPreprocessor
@@ -162,7 +165,8 @@ class PhishingModelTrainer:
         
         # Preprocess
         if data_type == 'url':
-            df = self.preprocessor.preprocess_url_dataset(df)
+            # No preprocessing needed - extractor already normalized
+            pass
         elif data_type == 'certificate':
             df = self.preprocessor.preprocess_certificate_dataset(df)
         elif data_type == 'domain':
@@ -179,70 +183,73 @@ class PhishingModelTrainer:
         
         return X, y
     
-    def _generate_synthetic_data(self, data_type: str) -> pd.DataFrame:
-        """Generate synthetic phishing dataset."""
-        np.random.seed(42)
-        n_samples = 5000
+    def _generate_synthetic_data(self, data_type: str) -> pd.DataFrame:\n        \"\"\"Generate synthetic phishing dataset with consistent features.\"\"\"\n        np.random.seed(42)
+        n_samples = 10000  # More data for better model
+        
+        extractor = URLFeatureExtractor()
         
         if data_type == 'url':
-            # Generate URL features
-            data = []
-            for _ in range(n_samples):
-                is_phishing = np.random.random() < 0.4
-                
-                if is_phishing:
-                    features = {
-                        'url_length': np.random.randint(60, 200),
-                        'hostname_length': np.random.randint(20, 80),
-                        'path_length': np.random.randint(20, 150),
-                        'num_dots': np.random.randint(3, 8),
-                        'num_hyphens': np.random.randint(2, 6),
-                        'num_underscores': np.random.randint(0, 5),
-                        'num_slashes': np.random.randint(4, 12),
-                        'num_digits': np.random.randint(5, 30),
-                        'num_special': np.random.randint(3, 10),
-                        'has_ip': np.random.randint(0, 2),
-                        'has_at_symbol': np.random.randint(0, 2),
-                        'has_https': np.random.randint(0, 2),
-                        'has_port': np.random.randint(0, 2),
-                        'is_suspicious_tld': np.random.randint(0, 2),
-                        'has_suspicious_keyword': np.random.randint(0, 2),
-                        'has_double_extension': np.random.randint(0, 2),
-                        'has_encoded_chars': np.random.randint(0, 2),
-                        'subdomain_count': np.random.randint(3, 8),
-                        'long_subdomain': np.random.randint(0, 2),
-                        'query_length': np.random.randint(20, 100),
-                        'has_email_in_url': np.random.randint(0, 2),
-                        'label': 1
-                    }
-                else:
-                    features = {
-                        'url_length': np.random.randint(20, 80),
-                        'hostname_length': np.random.randint(10, 30),
-                        'path_length': np.random.randint(5, 40),
-                        'num_dots': np.random.randint(1, 3),
-                        'num_hyphens': np.random.randint(0, 2),
-                        'num_underscores': 0,
-                        'num_slashes': np.random.randint(2, 5),
-                        'num_digits': np.random.randint(0, 3),
-                        'num_special': np.random.randint(0, 2),
-                        'has_ip': 0,
-                        'has_at_symbol': 0,
-                        'has_https': 1,
-                        'has_port': 0,
-                        'is_suspicious_tld': 0,
-                        'has_suspicious_keyword': 0,
-                        'has_double_extension': 0,
-                        'has_encoded_chars': 0,
-                        'subdomain_count': np.random.randint(0, 2),
-                        'long_subdomain': 0,
-                        'query_length': np.random.randint(0, 20),
-                        'has_email_in_url': 0,
-                        'label': 0
-                    }
-                data.append(features)
+            # Synthetic URLs for training
+            safe_urls = [
+                'https://google.com',
+                'https://facebook.com/login',
+                'https://amazon.com/verify',
+                'https://paypal.com',
+                'https://microsoft.com/account',
+                'https://apple.com/id',
+                'https://netflix.com',
+                'https://youtube.com',
+                'https://twitter.com',
+                'https://instagram.com',
+            ] * 500  # Repeat
             
-            return pd.DataFrame(data)
+            phishing_patterns = [
+                'http://login-bank.com.verify.tk',
+                'https://secure-paypal.com.verify.xyz',
+                'http://192.168.1.1/admin',
+                'https://amazon-support.netflix.ga',
+                'http://user@google.com.phishing.ml',
+                'https://update-windows.xyz/secure',
+                'http://bit.ly/paypal-verify',
+                'https://mail.google.com.phish.cf',
+                'https://secure-amazon.com-verify.top',
+                'http://pay-pal.com/login'
+            ] * 600  # More phishing
+            
+            all_urls = safe_urls + phishing_patterns
+            np.random.shuffle(all_urls)
+            all_urls = all_urls[:n_samples]
+            
+            data = []
+            for i, url in enumerate(all_urls):
+                features = extractor.extract_features(url)
+                if features:
+                    features['label'] = 1 if i < 6000 else 0  # 60% phishing
+                    # Extract ML features only
+                    ml_features = [
+                        features['url_length_log'],
+                        features['has_ip'],
+                        features['has_at'],
+                        features['dash_count_norm'],
+                        features['suspicious_tld'],
+                        features['http_no_ssl'],
+                        features['subdomain_norm'],
+                        features['digit_ratio'],
+                        features['entropy'],
+                        features['hex_ratio'],
+                        features['is_shortener']
+                    ]
+                    feature_dict = dict(zip([
+                        'url_length_log', 'has_ip', 'has_at', 'dash_count_norm',
+                        'suspicious_tld', 'http_no_ssl', 'subdomain_norm', 
+                        'digit_ratio', 'entropy', 'hex_ratio', 'is_shortener'
+                    ], ml_features))
+                    feature_dict['label'] = features['label']
+                    data.append(feature_dict)
+            
+            df = pd.DataFrame(data)
+            print(f"Generated {len(df)} URL samples with {len(df.columns)-1} features")
+            return df
         
         elif data_type == 'certificate':
             # Generate certificate features

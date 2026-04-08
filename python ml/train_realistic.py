@@ -35,7 +35,7 @@ try:
 except ImportError:
     XGBOOST_AVAILABLE = False
 
-from phishing_detector import URLFeatureExtractor
+from URLFeatureExtractor import URLFeatureExtractor
 import joblib
 
 # Configuration
@@ -188,8 +188,13 @@ def train_and_evaluate(df, dataset_name="Realistic"):
     print(f"{'='*60}")
     
     # Prepare features
-    X = df.drop(columns=['label'])
-    X = X.select_dtypes(include=[np.number])
+    # Select EXACTLY 11 ML features matching detector
+    ml_feature_cols = [
+        'url_length_log', 'has_ip', 'has_at', 'dash_count_norm', 
+        'suspicious_tld', 'http_no_ssl', 'subdomain_norm', 'digit_ratio',
+        'entropy', 'hex_ratio', 'is_shortener'
+    ]
+    X = df[ml_feature_cols]
     y = df['label']
     
     feature_names = list(X.columns)

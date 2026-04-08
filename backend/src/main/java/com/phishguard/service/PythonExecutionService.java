@@ -7,384 +7,214 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.*;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.HashMap;
-import java.util.Map;
+import java.nio.file.*;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Service for executing Python ML scripts directly.
- * This replaces the Flask API integration.
- */
 @Service
 public class PythonExecutionService {
-    
+
     private static final Logger logger = LoggerFactory.getLogger(PythonExecutionService.class);
-    
+
     private final ObjectMapper objectMapper = new ObjectMapper();
-    
-    @Value("${python.script.path:../python ml/phishing_detector.py}")
+
+@Value("${python.script.path:../python/ml/phishing_detector_fixed.py}")
     private String pythonScriptPath;
-    
+
     @Value("${python.executable:python3}")
     private String pythonExecutable;
-    
+
     /**
-     * Execute a Python script with the given arguments and return JSON output.
-     * 
-     * @param scriptPath Path to the Python script (relative to backend directory)
-     * @param args Command line arguments to pass to the script
-     * @return Map containing the JSON response from Python
+     * Execute Python script and return parsed JSON.
      */
+    @SuppressWarnings("unchecked")
     public Map<String, Object> executeScript(String scriptPath, String... args) {
         try {
-            // Build the command
-            java.util.List<String> command = new java.util.ArrayList<>();
+            List<String> command = new ArrayList<>();
             command.add(pythonExecutable);
-            
-            // Add script path
-            if (!scriptPath.startsWith("/")) {
-                // Resolve relative path from backend directory
-                Path basePath = Paths.get("").toAbsolutePath();
-                scriptPath = basePath.resolve(scriptPath).toString();
+
+            // Resolve absolute path
+            Path script = Paths.get(scriptPath);
+            if (!script.isAbsolute()) {
+                script = Paths.get("").toAbsolutePath().resolve(scriptPath);
             }
-            command.add(scriptPath);
-            
-            // Add additional arguments
-            for (String arg : args) {
-                command.add(arg);
-            }
-            
-            logger.info("Executing Python script: {}", String.join(" ", command));
-            
-            // Execute the process
-            ProcessBuilder processBuilder = new ProcessBuilder(command);
-            processBuilder.redirectErrorStream(true);
-            
-            Process process = processBuilder.start();
-            
-            // Read output
+
+            command.add(script.toString());
+            command.addAll(Arrays.asList(args));
+
+            logger.info("Executing Python: {}", String.join(" ", command));
+
+            ProcessBuilder pb = new ProcessBuilder(command);
+            pb.redirectErrorStream(true);
+
+            Process process = pb.start();
+
             StringBuilder output = new StringBuilder();
+
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(process.getInputStream()))) {
+
                 String line;
                 while ((line = reader.readLine()) != null) {
                     output.append(line).append("\n");
                 }
             }
-            
-            // Wait for completion
-            boolean finished = process.waitFor(30, TimeUnit.SECONDS);
-            
+
+            // ✅ Increased timeout
+            boolean finished = process.waitFor(60, TimeUnit.SECONDS);
+
             if (!finished) {
                 process.destroyForcibly();
-                logger.warn("Python script timed out");
-                return createErrorResponse("Script execution timed out");
+                return createErrorResponse("Python script timeout");
             }
-            
+
             int exitCode = process.exitValue();
-            logger.info("Python script exited with code: {}", exitCode);
-            
+            logger.info("Python exit code: {}", exitCode);
+
+            String rawOutput = output.toString().trim();
+
+            // 🔥 IMPORTANT DEBUG LOG
+            logger.info("RAW PYTHON OUTPUT:\n{}", rawOutput);
+
             if (exitCode != 0) {
-                logger.warn("Python script error: {}", output.toString());
-                return createErrorResponse("Script execution failed: " + output.toString());
+                return createErrorResponse("Python error: " + rawOutput);
             }
-            
-            // Parse JSON output
-            String outputStr = output.toString().trim();
-            if (outputStr.isEmpty()) {
-                return createErrorResponse("Empty output from script");
+
+            if (rawOutput.isEmpty()) {
+                return createErrorResponse("Empty output from Python");
             }
-            
-            // Try to parse as JSON
+
+            // 🔥 FIXED: Extract last complete JSON block
+            // Find last complete JSON (from last { to matching })
+            String[] lines = rawOutput.split("\n");
+            StringBuilder jsonBuilder = new StringBuilder();
+            int braceCount = 0;
+            boolean inJson = false;
+            for (String line : lines) {
+                if (line.trim().startsWith("{")) {
+                    if (!inJson) {
+                        jsonBuilder = new StringBuilder();
+                        inJson = true;
+                    }
+                    jsonBuilder.append(line.trim()).append("\n");
+                    braceCount = 1;
+                } else if (inJson) {
+                    jsonBuilder.append(line.trim()).append("\n");
+                    for (char c : line.toCharArray()) {
+                        if (c == '{') braceCount++;
+                        else if (c == '}') {
+                            braceCount--;
+                            if (braceCount == 0) {
+                                break;
+                            }
+                        }
+                    }
+                    if (braceCount == 0) {
+                        break;
+                    }
+                }
+            }
+            rawOutput = jsonBuilder.toString().trim();
+
+            logger.info("CLEAN JSON OUTPUT:\n{}", rawOutput);
+
             try {
-                return objectMapper.readValue(outputStr, Map.class);
+                return objectMapper.readValue(rawOutput, Map.class);
             } catch (Exception e) {
-                // If not JSON, wrap in a response
-                Map<String, Object> result = new HashMap<>();
-                result.put("output", outputStr);
-                result.put("result", "success");
-                return result;
+                logger.error("JSON parse failed: {}", rawOutput);
+                return createErrorResponse("Invalid JSON from Python");
             }
-            
-        } catch (IOException e) {
-            logger.error("IO error executing Python script: {}", e.getMessage());
-            return createErrorResponse("IO error: " + e.getMessage());
-        } catch (InterruptedException e) {
-            logger.error("Python script interrupted: {}", e.getMessage());
-            Thread.currentThread().interrupt();
-            return createErrorResponse("Script interrupted: " + e.getMessage());
+
         } catch (Exception e) {
-            logger.error("Error executing Python script: {}", e.getMessage());
-            return createErrorResponse("Error: " + e.getMessage());
+            logger.error("Execution error: {}", e.getMessage());
+            return createErrorResponse("Execution error: " + e.getMessage());
         }
     }
-    
+
     /**
-     * Execute URL phishing detection using Python ML.
-     * 
-     * @param url The URL to check
-     * @return Map containing detection result
-     */
-    public Map<String, Object> detectUrlPhishing(String url) {
-        try {
-            // Create a temporary input file with the URL
-            Map<String, String> input = new HashMap<>();
-            input.put("url", url);
-            
-            String inputJson = objectMapper.writeValueAsString(input);
-            
-            // Write input to temp file
-            File tempInputFile = File.createTempFile("phish_input_", ".json");
-            try {
-                Files.writeString(tempInputFile.toPath(), inputJson);
-                
-                // Execute script with input file
-                return executeWithInputFile(tempInputFile.getAbsolutePath(), "--url");
-            } finally {
-                tempInputFile.delete();
-            }
-        } catch (Exception e) {
-            logger.error("Error in URL detection: {}", e.getMessage());
-            return createErrorResponse("Error detecting URL: " + e.getMessage());
-        }
-    }
-    
-    /**
-     * Execute detection with input from a file.
-     */
-    private Map<String, Object> executeWithInputFile(String inputFile, String... extraArgs) throws Exception {
-        java.util.List<String> command = new java.util.ArrayList<>();
-        command.add(pythonExecutable);
-        
-        // Resolve script path
-        String resolvedScriptPath = pythonScriptPath;
-        if (!pythonScriptPath.startsWith("/")) {
-            Path basePath = Paths.get("").toAbsolutePath();
-            resolvedScriptPath = basePath.resolve(pythonScriptPath).toString();
-        }
-        command.add(resolvedScriptPath);
-        
-        // Add extra args
-        command.add("--input");
-        command.add(inputFile);
-        
-        for (String arg : extraArgs) {
-            command.add(arg);
-        }
-        
-        logger.info("Executing: {}", String.join(" ", command));
-        
-        ProcessBuilder processBuilder = new ProcessBuilder(command);
-        processBuilder.redirectErrorStream(true);
-        
-        Process process = processBuilder.start();
-        
-        StringBuilder output = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream()))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                output.append(line).append("\n");
-            }
-        }
-        
-        boolean finished = process.waitFor(30, TimeUnit.SECONDS);
-        
-        if (!finished) {
-            process.destroyForcibly();
-            return createErrorResponse("Script timed out");
-        }
-        
-        String outputStr = output.toString().trim();
-        if (outputStr.isEmpty()) {
-            return createErrorResponse("Empty output");
-        }
-        
-        try {
-            return objectMapper.readValue(outputStr, Map.class);
-        } catch (Exception e) {
-            Map<String, Object> result = new HashMap<>();
-            result.put("output", outputStr);
-            return result;
-        }
-    }
-    
-    /**
-     * Simple URL detection that parses output from the ML script.
-     * This is a simplified version that works with the existing script structure.
+     * URL phishing detection
      */
     public Map<String, Object> detectUrl(String url) {
         try {
-            // Get the backend directory path
-            Path backendPath = Paths.get("").toAbsolutePath();
-            Path pythonMlPath = backendPath.resolve("..").resolve("python ml");
-            Path modelsPath = backendPath.resolve("..").resolve("models");
-            
-            // Use Python -c to execute inline code
-            String pythonCode = String.format(
-                "import sys; sys.path.insert(0, '%s'); " +
-                "from phishing_detector import PhishingDetectorML; " +
-                "import json; " +
-                "detector = PhishingDetectorML(model_dir='%s'); " +
-                "result = detector.check_url('%s'); " +
-                "print(json.dumps(result))",
-                pythonMlPath.toString().replace("\\", "\\\\"),
-                modelsPath.toString().replace("\\", "\\\\"),
-                url.replace("'", "''")
-            );
-            
-            java.util.List<String> command = java.util.Arrays.asList(
-                pythonExecutable, "-c", pythonCode
-            );
-            
-            logger.info("Executing URL detection for: {} from directory: {}", url, backendPath);
-            
-            ProcessBuilder processBuilder = new ProcessBuilder(command);
-            processBuilder.directory(backendPath.toFile());
-            processBuilder.redirectErrorStream(true);
-            
-            Process process = processBuilder.start();
-            
-            StringBuilder output = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    output.append(line);
-                }
-            }
-            
-            boolean finished = process.waitFor(30, TimeUnit.SECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                logger.warn("Python script timed out for URL: {}", url);
-                return createErrorResponse("Timeout");
-            }
-            
-            int exitCode = process.exitValue();
-            String outputStr = output.toString().trim();
-            logger.info("Python output for URL {}: exitCode={}, output={}", url, exitCode, outputStr);
-            
-            if (exitCode != 0 || outputStr.isEmpty()) {
-                logger.warn("Python script failed for URL: {}, falling back to heuristic", url);
-                return createErrorResponse("Python execution failed");
-            }
-            
-            return objectMapper.readValue(outputStr, Map.class);
-            
+            return executeScript(pythonScriptPath, url);
         } catch (Exception e) {
-            logger.error("Error detecting URL {}: {}", url, e.getMessage());
+            logger.error("URL detection error: {}", e.getMessage());
             return createErrorResponse(e.getMessage());
         }
     }
-    
+
     /**
-     * Simple certificate detection.
+     * Certificate detection
      */
     public Map<String, Object> detectCertificate(Map<String, Object> certData) {
         try {
-            String jsonCert = objectMapper.writeValueAsString(certData)
-                .replace("'", "''");
-            
-            String pythonCode = String.format(
-                "import sys; sys.path.insert(0, '.'); " +
-                "from phishing_detector import PhishingDetectorML; " +
-                "import json; " +
-                "detector = PhishingDetectorML(model_dir='../models'); " +
-                "result = detector.check_certificate(%s); " +
-                "print(json.dumps(result))",
-                jsonCert
-            );
-            
-            java.util.List<String> command = java.util.Arrays.asList(
-                pythonExecutable, "-c", pythonCode
-            );
-            
-            ProcessBuilder processBuilder = new ProcessBuilder(command);
-            processBuilder.directory(Paths.get("").toAbsolutePath().toFile());
-            processBuilder.redirectErrorStream(true);
-            
-            Process process = processBuilder.start();
-            
-            StringBuilder output = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    output.append(line);
-                }
+            String inputJson = objectMapper.writeValueAsString(certData);
+
+            File tempFile = File.createTempFile("cert_", ".json");
+            Files.writeString(tempFile.toPath(), inputJson);
+
+            try {
+                return executeScript(
+                        pythonScriptPath,
+                        "--type", "certificate",
+                        "--input", tempFile.getAbsolutePath()
+                );
+            } finally {
+                tempFile.delete();
             }
-            
-            process.waitFor(30, TimeUnit.SECONDS);
-            
-            String outputStr = output.toString().trim();
-            if (outputStr.isEmpty()) {
-                return createErrorResponse("Empty output");
-            }
-            
-            return objectMapper.readValue(outputStr, Map.class);
-            
+
         } catch (Exception e) {
-            logger.error("Error detecting certificate: {}", e.getMessage());
+            logger.error("Certificate detection error: {}", e.getMessage());
             return createErrorResponse(e.getMessage());
         }
     }
-    
+
     /**
-     * Simple domain detection.
+     * Domain detection
      */
     public Map<String, Object> detectDomain(Map<String, Object> domainData) {
         try {
-            String jsonDomain = objectMapper.writeValueAsString(domainData)
-                .replace("'", "''");
-            
-            String pythonCode = String.format(
-                "import sys; sys.path.insert(0, '.'); " +
-                "from phishing_detector import PhishingDetectorML; " +
-                "import json; " +
-                "detector = PhishingDetectorML(model_dir='../models'); " +
-                "result = detector.check_domain(%s); " +
-                "print(json.dumps(result))",
-                jsonDomain
-            );
-            
-            java.util.List<String> command = java.util.Arrays.asList(
-                pythonExecutable, "-c", pythonCode
-            );
-            
-            ProcessBuilder processBuilder = new ProcessBuilder(command);
-            processBuilder.directory(Paths.get("").toAbsolutePath().toFile());
-            processBuilder.redirectErrorStream(true);
-            
-            Process process = processBuilder.start();
-            
-            StringBuilder output = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    output.append(line);
-                }
+            String domain = String.valueOf(domainData.get("domain"));
+
+            // ✅ FIX: sanitize bad input like "[object Object]"
+            if (domain == null || domain.contains("[object")) {
+                return createErrorResponse("Invalid domain input");
             }
-            
-            process.waitFor(30, TimeUnit.SECONDS);
-            
-            String outputStr = output.toString().trim();
-            if (outputStr.isEmpty()) {
-                return createErrorResponse("Empty output");
+
+            Map<String, Object> cleanData = new HashMap<>();
+            cleanData.put("domain", domain);
+            cleanData.put("domain_age_days", 365); // fallback
+
+            String inputJson = objectMapper.writeValueAsString(cleanData);
+
+            File tempInputFile = File.createTempFile("phish_domain_", ".json");
+            try {
+                Files.writeString(tempInputFile.toPath(), inputJson);
+
+                String scriptPath = pythonScriptPath;
+
+                Map<String, Object> result = executeScript(
+                        scriptPath,
+                        "--type", "domain",
+                        "--input", tempInputFile.getAbsolutePath()
+                );
+
+                logger.info("Domain ML result: {}", result);
+                return result;
+
+            } finally {
+                tempInputFile.delete();
             }
-            
-            return objectMapper.readValue(outputStr, Map.class);
-            
+
         } catch (Exception e) {
             logger.error("Error detecting domain: {}", e.getMessage());
             return createErrorResponse(e.getMessage());
-        }
+            }
     }
-    
+
+    /**
+     * Standard error response
+     */
     private Map<String, Object> createErrorResponse(String message) {
         Map<String, Object> error = new HashMap<>();
         error.put("result", "error");

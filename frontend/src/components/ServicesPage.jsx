@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { ShieldCheck, Globe, FileCheck, Search, Loader2 } from "lucide-react";
+import { useAuth } from "../contexts/AuthContext.jsx";
+import { ShieldCheck, Globe, FileCheck, Search, Loader2, AlertCircle } from "lucide-react";
 
 // Services Page Component
 export default function ServicesPage() {
@@ -20,9 +21,9 @@ export default function ServicesPage() {
   const [domainResult, setDomainResult] = useState(null);
   const [domainModalVisible, setDomainModalVisible] = useState(false);
   const [domainLoading, setDomainLoading] = useState(false);
-const [domainError, setDomainError] = useState(null);
+  const [domainError, setDomainError] = useState(null);
 
-  const [urlDomainResult, setUrlDomainResult] = useState(null);
+  const { token } = useAuth();
 
   const scanUrl = async () => {
     if (!urlInput) return;
@@ -31,20 +32,14 @@ const [domainError, setDomainError] = useState(null);
     setUrlResult(null);
 
     try {
-      // Create plain objects outside closures and stringify early to avoid refs
       const urlReq = { url: urlInput };
-      let urlBody;
-      try {
-        urlBody = JSON.stringify(urlReq);
-      } catch (stringifyErr) {
-        console.error('JSON stringify failed:', stringifyErr);
-        throw new Error('Failed to prepare scan request');
-      }
+      const urlBody = JSON.stringify(urlReq);
       
       const response = await fetch("/api/url/scan", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(token && { "Authorization": `Bearer ${token}` }),
         },
         body: urlBody,
       });
@@ -54,24 +49,15 @@ const [domainError, setDomainError] = useState(null);
       }
 
       const data = await response.json();
+      console.log("🔍 URL API Response:", data); 
       setUrlResult({
         type: "url",
-        result: data.result,
-        confidence: data.confidence,
-        message: data.message,
+        result: data.result || "unknown",
+        confidence: data.confidence || 0,
+        message: data.message || "Complete",
       });
-
-      // Domain lookup removed from URL scanner as per request
     } catch (err) {
       setUrlError(err.message);
-      // Fallback to local heuristic
-      const isPhishing = urlInput.length > 75 || urlInput.includes("@") || !urlInput.startsWith("https");
-      setUrlResult({
-        type: "url",
-        result: isPhishing ? "phishing" : "safe",
-        confidence: isPhishing ? 75 : 80,
-        message: isPhishing ? "Phishing website detected (local check)" : "Website appears safe (local check)",
-      });
     } finally {
       setUrlLoading(false);
     }
@@ -84,7 +70,6 @@ const [domainError, setDomainError] = useState(null);
     setCertResult(null);
 
     try {
-      // Extract domain from URL or use the input directly
       let domain = certInput;
       try {
         const urlObj = new URL(certInput.startsWith("http") ? certInput : `https://${certInput}`);
@@ -93,20 +78,14 @@ const [domainError, setDomainError] = useState(null);
         // Use the input as-is
       }
 
-      // Create plain objects outside closures and stringify early to avoid refs
       const certReq = { domain: domain };
-      let certBody;
-      try {
-        certBody = JSON.stringify(certReq);
-      } catch (stringifyErr) {
-        console.error('JSON stringify failed:', stringifyErr);
-        throw new Error('Failed to prepare certificate request');
-      }
+      const certBody = JSON.stringify(certReq);
       
       const response = await fetch("/api/certificate/check", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(token && { "Authorization": `Bearer ${token}` }),
         },
         body: certBody,
       });
@@ -115,116 +94,70 @@ const [domainError, setDomainError] = useState(null);
         throw new Error("Failed to check certificate");
       }
 
-      const data = await response.json();
+      const data = await response.json();    
+      console.log("🔍 CERT API Response:", data); 
       setCertResult({
         type: "certificate",
-        result: data.result,
-        confidence: data.confidence,
-        message: data.message,
+        result: data.result || "unknown",
+        confidence: data.confidence || 0,
+        message: data.message || "Complete",
       });
     } catch (err) {
       setCertError(err.message);
-      // Fallback to local heuristic
-      const hasHttps = certInput.startsWith("https");
-      const isValid = hasHttps && !certInput.includes("@");
-      setCertResult({
-        type: "certificate",
-        result: isValid ? "certificate-valid" : "certificate-invalid",
-        confidence: isValid ? 70 : 60,
-        message: isValid ? "Certificate is valid (local check)" : "Certificate issue found (local check)",
-      });
     } finally {
       setCertLoading(false);
     }
   };
 
-const safeString = (val) => String(val || '');
+  const lookupDomain = async () => {
+    if (!domainInput) return;
 
-const lookupDomain = async (safeInput, customSetter = null) => {
-    const input = safeString(safeInput);
-    if (!input) return;
     setDomainLoading(true);
     setDomainError(null);
     setDomainResult(null);
 
     try {
-      // Extract domain from URL or use the input directly
-    let domain = input;
+      let domain = domainInput;
+
+      // ✅ Extract clean domain
       try {
-        const urlObj = new URL(input.startsWith("http") ? input : `https://${input}`);
+        const urlObj = new URL(
+          domainInput.startsWith("http")
+            ? domainInput
+            : `https://${domainInput}`
+        );
         domain = urlObj.hostname;
       } catch (e) {
-        // Use the input as-is
+        domain = domainInput.trim();
       }
 
-      // Create plain objects outside closures and stringify early to avoid refs
-      const domainReq = { domain: domain };
-      let domainBody;
-      try {
-        domainBody = JSON.stringify(domainReq);
-      } catch (stringifyErr) {
-        console.error('JSON stringify failed:', stringifyErr);
-        throw new Error('Failed to prepare domain request');
-      }
-      
       const response = await fetch("/api/domain/lookup", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(token && { Authorization: `Bearer ${token}` }),
         },
-        body: domainBody,
+        body: JSON.stringify({ domain }),
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to lookup domain");
-      }
+      if (!response.ok) throw new Error("Failed to lookup domain");
 
-      const data = await response.json();
-      const setter = customSetter || setDomainResult;
-      setter({
+      const data = await response.json();    
+      console.log("🔍 DOMAIN API Response:", data);
+
+      setDomainResult({
         type: "domain",
-        result: data.result,
-        confidence: data.confidence,
-        message: data.message,
+        result: data.result || "domain-valid",
+        confidence: data.confidence || 0,
+        message: data.message || "Analysis complete",
         details: data.details,
         ownership: data.ownership,
       });
+
     } catch (err) {
       setDomainError(err.message);
-      // Fallback to local heuristic - flag fake/suspicious domains
-      const domain = input.toLowerCase().trim();
-      const isSuspicious = !domain.includes('.') || domain.length < 6 || domain.includes('fake') || !domain.match(/^[a-z0-9-]{2,}\\.[a-z]{2,}$/i);
-      const setter = customSetter || setDomainResult;
-      setter({
-        type: "domain",
-        result: isSuspicious ? "domain-suspicious" : "domain-valid",
-        confidence: isSuspicious ? 92 : 70,
-        message: isSuspicious ? "Suspicious domain detected (local check)" : "Domain appears legitimate (local check)",
-        details: isSuspicious ? {
-          domainAgeDays: 2,
-          isNewDomain: true,
-          registrar: "Privacy Protected",
-          hasPrivacyProtection: true,
-          countryName: "Unknown",
-          nameServers: ["ns1.hidden.com", "ns2.hidden.com"]
-        } : {
-          domainAgeDays: 365,
-          registrar: "Known Registrar",
-          hasPrivacyProtection: false
-        }
-      });
     } finally {
       setDomainLoading(false);
-    }
-  };
-
-  const extractDomain = (input) => {
-    try {
-      const url = input.startsWith("http") ? input : `https://${input}`;
-      return new URL(url).hostname;
-    } catch (e) {
-      const match = input.match(/https?:\/\/([^\/]+)/i) || input.match(/([a-z0-9-]+\\.[a-z.]{2,})/i);
-      return match ? match[1] : input;
     }
   };
 
@@ -306,7 +239,7 @@ const lookupDomain = async (safeInput, customSetter = null) => {
                 >
                   {service.loading ? (
                     <>
-                      <Loader2 className="animate-spin" style={{animation: "spin 1s linear infinite"}} />
+                      <Loader2 className="animate-spin mr-2 h-4 w-4" />
                       Scanning...
                     </>
                   ) : (
@@ -315,9 +248,28 @@ const lookupDomain = async (safeInput, customSetter = null) => {
                 </button>
               </div>
 
-{/* Error hidden - seamless fallback */}
+              {service.error && (
+                <div className="service-error">
+                  Error: {service.error}
+                </div>
+              )}
 
-              {service.result && (
+              {/* NEW: Handle ML/Python errors */}
+              {service.result && service.result.result === 'error' && (
+                <div className="service-result result-error">
+                  <AlertCircle className="result-icon" />
+                  <div className="result-content">
+                    Analysis Error: {service.result.message || 'ML processing failed'}
+                  </div>
+                  {service.result.confidence !== undefined && (
+                    <div className="result-confidence">
+                      Confidence: {service.result.confidence.toFixed(1)}%
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {service.result && service.result.result !== 'error' && !service.error && (
                 <div
                   className={`service-result ${
                     service.result.result === 'safe' || service.result.result === 'certificate-valid' || service.result.result === 'domain-valid'
@@ -335,7 +287,7 @@ const lookupDomain = async (safeInput, customSetter = null) => {
                     {service.result.result === 'domain-suspicious' && 'Domain Shows Suspicious Characteristics'}
                     {service.result.result === 'domain-invalid' && 'Invalid Domain'}
                   </div>
-{service.result.confidence && (
+                  {service.result.confidence && (
                     <div className="result-confidence">
                       Confidence: {service.result.confidence.toFixed(1)}%
                     </div>
@@ -348,7 +300,6 @@ const lookupDomain = async (safeInput, customSetter = null) => {
                       📊 View Full Details
                     </button>
                   )}
-
                 </div>
               )}
             </div>
@@ -374,7 +325,7 @@ const lookupDomain = async (safeInput, customSetter = null) => {
                 </div>
               </div>
               
-{domainResult.details && (
+              {domainResult.details && (
                 <div className="domain-section">
                   <h5>Domain Information</h5>
                   <div className="aligned-details-container">
@@ -424,7 +375,7 @@ const lookupDomain = async (safeInput, customSetter = null) => {
                 </div>
               )}
               
-{domainResult.ownership && (
+              {domainResult.ownership && (
                 <div className="domain-section">
                   <h5>Ownership Information</h5>
                   <div className="aligned-details-container">
@@ -468,5 +419,3 @@ const lookupDomain = async (safeInput, customSetter = null) => {
     </div>
   );
 }
-
-   
