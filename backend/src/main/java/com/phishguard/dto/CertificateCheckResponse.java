@@ -34,6 +34,25 @@ public class CertificateCheckResponse {
         private Integer sanCount;
         private Boolean hasWildcard;
         private String signatureAlgorithm;
+        
+        public boolean isValid() {
+            return Boolean.TRUE.equals(this.isValid);
+        }
+        
+        @SuppressWarnings("unchecked")
+        public java.util.Map<String, Object> toMap() {
+            java.util.Map<String, Object> map = new java.util.HashMap<>();
+            map.put("isValid", isValid());
+            map.put("daysUntilExpiry", daysUntilExpiry);
+            map.put("issuer", issuer);
+            map.put("subject", subject);
+            map.put("keySize", keySize);
+            map.put("hasChain", hasChain);
+            map.put("sanCount", sanCount);
+            map.put("hasWildcard", hasWildcard);
+            map.put("signatureAlgorithm", signatureAlgorithm);
+            return map;
+        }
     }
     
     public static CertificateCheckResponse valid(Double confidence, CertificateDetails details) {

@@ -21,10 +21,15 @@ export const AuthProvider = ({ children }) => {
     if (token) {
       try {
         const decoded = jwtDecode(token);
-        setUser({ id: decoded.id || decoded.sub, email: decoded.sub, name: decoded.name });
+        const id = decoded.id || decoded.sub || decoded.email;
+        const email = decoded.email || decoded.sub;
+        const name = decoded.name || 'User';
+        setUser({ id, email, name });
         setToken(token);
       } catch (error) {
+        console.error('Invalid JWT token:', error);
         localStorage.removeItem('token');
+        setToken(null);
       }
     }
     setLoading(false);
@@ -32,8 +37,15 @@ export const AuthProvider = ({ children }) => {
 
   const login = (newToken) => {
     localStorage.setItem('token', newToken);
-    const decoded = jwtDecode(newToken);
-    setUser({ id: decoded.id || decoded.sub, email: decoded.sub, name: decoded.name });
+    try {
+      const decoded = jwtDecode(newToken);
+      const id = decoded.id || decoded.sub || decoded.email;
+      const email = decoded.email || decoded.sub;
+      const name = decoded.name || 'User';
+      setUser({ id, email, name });
+    } catch (error) {
+      console.error('Invalid login token:', error);
+    }
     setToken(newToken);
   };
 

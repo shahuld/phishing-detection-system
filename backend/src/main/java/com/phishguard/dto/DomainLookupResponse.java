@@ -51,6 +51,35 @@ public class DomainLookupResponse {
         private String creationDate;
         private String expiryDate;
         private String updatedDate;
+        
+        @SuppressWarnings("unchecked")
+        public java.util.Map<String, Object> toMap() {
+            java.util.Map<String, Object> map = new java.util.HashMap<>();
+            map.put("domain", domain);
+            map.put("domainName", domainName);
+            map.put("tld", tld);
+            map.put("domainAgeDays", domainAgeDays);
+            map.put("isNewDomain", isNewDomain);
+            map.put("daysUntilExpiry", daysUntilExpiry);
+            map.put("registrar", registrar);
+            map.put("registrarUrl", registrarUrl);
+            map.put("isKnownRegistrar", isKnownRegistrar);
+            map.put("country", country);
+            map.put("countryName", countryName);
+            map.put("isHighRiskCountry", isHighRiskCountry);
+            map.put("hasPrivacyProtection", hasPrivacyProtection);
+            map.put("nameserverCount", nameserverCount);
+            map.put("nameServers", nameServers);
+            map.put("hasDnssec", hasDnssec);
+            map.put("dnssecStatus", dnssecStatus);
+            map.put("isParked", isParked);
+            map.put("isForSale", isForSale);
+            map.put("domainStatus", domainStatus);
+            map.put("creationDate", creationDate);
+            map.put("expiryDate", expiryDate);
+            map.put("updatedDate", updatedDate);
+            return map;
+        }
     }
     
     @Data

@@ -1,5 +1,7 @@
 package com.phishguard.controller;
 
+import com.phishguard.dto.CombinedScanRequest;
+import com.phishguard.dto.CombinedScanResponse;
 import com.phishguard.dto.UrlScanRequest;
 import com.phishguard.dto.UrlScanResponse;
 import com.phishguard.service.PhishingDetectionService;
@@ -39,7 +41,7 @@ public class URLController {
     }
     
     /**
-     * Scan a URL for phishing detection.
+     * Scan a URL for phishing detection (ML only).
      * POST /api/url/scan
      */
     @PostMapping("/scan")
@@ -48,6 +50,29 @@ public class URLController {
         UrlScanResponse response = phishingDetectionService.scanUrl(request);
         
         // Save to user history if authenticated
+        saveHistory(request.getUrl(), response.getConfidence(), "phishing".equals(response.getResult()), response.getMessage());
+        
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Combined scan across ML + Certificate + Domain services.
+     * Safe ONLY if all three services pass.
+     * POST /api/url/combined-scan
+     */
+    @PostMapping("/combined-scan")
+    public ResponseEntity<CombinedScanResponse> combinedScan(@Valid @RequestBody CombinedScanRequest request) {
+        logger.info("Received combined scan request for: {}", request.getUrl());
+        CombinedScanResponse response = phishingDetectionService.combinedScan(request);
+        
+        // Save combined result to history
+        boolean isPhishing = !"safe".equals(response.getResult());
+        saveHistory(request.getUrl(), response.getConfidence(), isPhishing, response.getDetails());
+        
+        return ResponseEntity.ok(response);
+    }
+
+    private void saveHistory(String url, Double score, boolean isPhishing, String details) {
         try {
             var authentication = SecurityContextHolder.getContext().getAuthentication();
             if (authentication != null && authentication.getName() != null) {
@@ -57,10 +82,10 @@ public class URLController {
                     User user = userOpt.get();
                     UrlHistory history = new UrlHistory();
                     history.setUser(user);
-                    history.setUrl(request.getUrl());
-                    history.setPhishingScore(response.getConfidence());
-                    history.setIsPhishing("phishing".equals(response.getResult()));
-                    history.setDetails(response.getMessage());
+                    history.setUrl(url);
+                    history.setPhishingScore(score);
+                    history.setIsPhishing(isPhishing);
+                    history.setDetails(details);
                     history.setScannedAt(LocalDateTime.now());
                     urlHistoryRepository.save(history);
                     logger.info("Saved URL history for user: {}", email);
@@ -69,8 +94,6 @@ public class URLController {
         } catch (Exception e) {
             logger.warn("Failed to save history: {}", e.getMessage());
         }
-        
-        return ResponseEntity.ok(response);
     }
     
     /**
